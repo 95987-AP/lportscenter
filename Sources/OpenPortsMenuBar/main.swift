@@ -266,16 +266,19 @@ struct MenuView: View {
                 .controlSize(.mini)
                 .font(.system(size: 10))
 
-            Button("Odśwież") {
-                vm.refresh()
+            HStack(spacing: 8) {
+                Button("Odśwież") {
+                    vm.refresh()
+                }
+                .controlSize(.small)
+                .font(.system(size: 11, weight: .medium))
+
+                Button("Zakończ aplikację") {
+                    NSApplication.shared.terminate(nil)
+                }
+                .controlSize(.small)
+                .font(.system(size: 11, weight: .medium))
             }
-            .controlSize(.small)
-            .font(.system(size: 11, weight: .medium))
-            Button("Zakończ aplikację") {
-                NSApplication.shared.terminate(nil)
-            }
-            .controlSize(.small)
-            .font(.system(size: 11, weight: .medium))
         }
         .padding(8)
     }
