@@ -8,6 +8,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+private enum SystemProcessClassifier {
+    static let knownSystemCommands: Set<String> = [
+        "controlcenter",
+        "rapportd",
+        "mDNSResponder".lowercased(),
+        "sharingd",
+        "locationd",
+        "airportd",
+        "bluetoothd",
+        "distnoted",
+        "identityservicesd",
+        "nsurlsessiond",
+        "cfprefsd",
+        "powerd",
+        "wifianalyticsd",
+        "configd",
+        "apsd",
+        "notifyd",
+    ]
+
+    static func isLikelySystemProcess(command: String) -> Bool {
+        let normalized = command.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if normalized.isEmpty {
+            return false
+        }
+        if knownSystemCommands.contains(normalized) {
+            return true
+        }
+        return normalized.hasPrefix("com.apple.")
+    }
+}
+
 struct OpenPort: Identifiable, Hashable {
     let pid: Int
     let command: String
@@ -17,6 +49,7 @@ struct OpenPort: Identifiable, Hashable {
     var id: String { "\(pid)-\(port)" }
     var localhostURL: URL? { URL(string: "http://localhost:\(port)") }
     var appDisplayName: String { command.isEmpty ? "unknown app" : command }
+    var isLikelySystemProcess: Bool { SystemProcessClassifier.isLikelySystemProcess(command: command) }
 }
 
 enum PortsError: LocalizedError {
@@ -119,9 +152,25 @@ final class PortsViewModel: ObservableObject {
     @Published var ports: [OpenPort] = []
     @Published var errorMessage: String?
     @Published var isLoading = false
+    @Published var showSystemProcesses = false
 
     private let service = PortsService()
     private var refreshTask: Task<Void, Never>?
+
+    var displayedPorts: [OpenPort] {
+        if showSystemProcesses {
+            return ports
+        }
+        return ports.filter { !$0.isLikelySystemProcess }
+    }
+
+    var hiddenSystemPortsCount: Int {
+        ports.reduce(into: 0) { partialResult, port in
+            if port.isLikelySystemProcess {
+                partialResult += 1
+            }
+        }
+    }
 
     func startAutoRefresh() {
         refresh()
@@ -175,19 +224,32 @@ struct MenuView: View {
     @ObservedObject var vm: PortsViewModel
 
     var body: some View {
+        let visiblePorts = vm.displayedPorts
+
         VStack(alignment: .leading, spacing: 8) {
-            if vm.isLoading && vm.ports.isEmpty {
+            if vm.isLoading && visiblePorts.isEmpty {
                 Text("Ładowanie…")
-            } else if vm.ports.isEmpty {
-                Text("Brak otwartych portów")
+            } else if visiblePorts.isEmpty {
+                if vm.ports.isEmpty {
+                    Text("Brak otwartych portów")
+                } else {
+                    Text("Brak portów (systemowe ukryte)")
+                }
             } else {
-                ForEach(vm.ports) { port in
+                ForEach(visiblePorts) { port in
                     PortRowView(
                         port: port,
+                        disableClose: port.isLikelySystemProcess,
                         onClose: { vm.terminateProcess(port) },
                         onOpen: { vm.openInBrowser(port) }
                     )
                 }
+            }
+
+            if vm.hiddenSystemPortsCount > 0 && !vm.showSystemProcesses {
+                Text("Ukryto \(vm.hiddenSystemPortsCount) procesów systemowych")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
             }
 
             if let error = vm.errorMessage {
@@ -199,6 +261,11 @@ struct MenuView: View {
             }
 
             Divider()
+            Toggle("Pokaż systemowe", isOn: $vm.showSystemProcesses)
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .font(.system(size: 10))
+
             Button("Odśwież") {
                 vm.refresh()
             }
@@ -216,6 +283,7 @@ struct MenuView: View {
 
 struct PortRowView: View {
     let port: OpenPort
+    let disableClose: Bool
     let onClose: () -> Void
     let onOpen: () -> Void
 
@@ -241,7 +309,9 @@ struct PortRowView: View {
                     .foregroundStyle(.red)
             }
             .buttonStyle(.plain)
-            .help("Zamknij PID \(port.pid)")
+            .disabled(disableClose)
+            .opacity(disableClose ? 0.35 : 1)
+            .help(disableClose ? "Proces systemowy — zamykanie zablokowane" : "Zamknij PID \(port.pid)")
 
             Button(action: onOpen) {
                 Image(systemName: "arrow.right.circle.fill")
